@@ -1,0 +1,245 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Shashikat Singh Kunwar"
+date: "03/09/2021"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Introduction
+In this work I will be using the data obtained from volunteers who were using 
+fitness devices during various physics activities. Based on the reading of various
+sensors in these wearable devices one can identify the activity those readings correspond
+to. 
+
+# Data download and preprocessing
+This function can be used to download the training and test data. Data is downloaded 
+only if those  files are not present in the current working directory.  
+```{r,cache=TRUE,echo=TRUE}
+## script to downloaded data from the URL into current working directory
+download_data<-function(){
+    # url of training and test data
+    urltr<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    urlts<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  
+    # downloading file only if it is not present in current working directory
+    if(!file.exists("pml-training.csv")){
+        download.file(urltr,destfile = "./pml-training.csv",method="curl")
+    }
+  
+    if(!file.exists("pml-testing.csv")){
+        download.file(urlts,destfile = "./pml-testing.csv",method = "curl")
+    }}
+```
+
+Once the data is downloaded this function allows it to be loaded into the working 
+environment. The response variable in the train_data needs to be converted  into 
+factor variable for the classification problem.
+I then extract all the predictors that have data corresponding to accelerometer
+using the grep command. For this part I ignore the columns that have NA values. 
+The function returns train_data for the accelerometer along with the labels(response).
+
+```{r}
+## Once the data is downloaded script will load the data in the working environment
+## The response column (classe in this case) is converted into factor variable for 
+## the classification task
+## The column corresponding to accelerometer data are filtered using grep
+## Columns with NA are stored in a list (listna)
+## we can generate two sets of data one without NA ans one with NA (na_include=0/1).
+
+load_traindata<-function(na_include=0){
+    # loading training data
+    train_data<-read.csv("pml-training.csv")
+  
+    # names of all the predictor variables
+    all_predictors<-names(train_data)
+    
+    # converting classe column into factor variable
+    train_data$classe<-as.factor(train_data$classe)
+  
+    # name of columns that contains data for accelerometer
+    accel_predictors<-all_predictors[grep("*accel*",all_predictors)]
+    
+    # list to store column name with NA
+    listna<-c()
+    for (j in seq(1:20)){
+        # check if nas exist for a particular column 
+        # if yes store the column name in listna
+        if (sum(is.na(train_data[,accel_predictors[j]]))){
+        listna<-c(listna,j)}}
+  
+    if(na_include==0){
+        # list of variable that don't have NA.
+        accel_nona_predictors<-accel_predictors[-listna]
+        data_nona_columns<-c(accel_nona_predictors,"classe")
+        
+        # return only finite data for accelerometer and labels
+        train_data[,data_nona_columns]
+        }
+    else{
+        # list of variables that have NA.
+        data_all_columns<-c(accel_predictors,"classe")
+        
+        # return the accelerometer data  along with the labels
+        train_data[,data_all_columns]
+        }}
+```
+To make predictions on the test data we also need to load the test data. This function
+can be called from any function and it will return the test_data.
+```{r,cache=TRUE}
+# function to load the test data file
+load_testdata<-function(){
+    test_data<-read.csv("pml-testing.csv")
+    test_data
+}
+```
+# Model selection and training.
+In this work I will be using a Gradient Boosting Algorithm(gbm). Boosted algorithm generally
+consists of weak learner(a decision tree with low depth). 
+The algorithm learns from the data and improves  its performance such that in 
+multiple iterations it learns to correctly identify the data point it 
+classified incorrectly.
+
+A default model can perform okay but to extract the most performance out of the 
+algorithm we need to tune the hyper parameters of the algorithm. Using a default
+gbm led to 75% accuracy in the test data (obtained by validating the predictions
+with the results of the quiz). Thus, my analysis here starts with the tuning of 
+the parameters itself. This is done automatically and one neeeds to provide only
+possible range of parameters.
+
+I already saved the model after hyper parameter tuning and k fold cross validation. 
+The training is only performed if there is no model saved otherwise the saved model
+is loaded into the working environment.
+The steps involved in the entire classification problem can be summarised as follows.
+
+1. Download training and test data.
+2. Load training and test data.
+3. Set the seed to a fixed value to allow for reproducibility.
+4. Split the training data into training_data and validation_data.
+5. Set the seed to a fixed value again.
+7. Set the training control (how many cross validation one wants to perform and 
+how many times).
+8. Set the hyper parameter grid as well. For a gradient boosting algorithm. The
+depth of the estimator is one of the hyper parameter and number of boosting iterations 
+that has to be performed is another hyper parameter. I tune only these two. However,
+one can tune other hyper parameter as well. Tuning more hyper parameter may take more
+time but if one can get correct answers using small subset of hyper parameters then 
+one should avoid tuning more. In my case I got all correct answers on test data using
+these two hyper parameter only.
+9. Train a model(in this case we use gradient boosting algorithm) passing the training
+control and hyper parameter grid.
+10. Save the model.
+
+One the model is trained we can make predictions on the validation set that we
+separated in the beginning. We can measure accuracy of the trained model on this 
+hold out set. In my work I calculated confusion matrix for the validation data. 
+The accuracy result on the validataion set is $> 0.90$.
+
+```{r,cache=TRUE}
+## function to perform machine learning task
+classification<-function(){
+    # importing library 
+    library(caret)
+    
+    # downloading data
+    download_data()
+    
+    # loading training and test data
+    train_data<-load_traindata(na_include = 0)
+    test_data<-load_testdata()
+    
+    # splitting train_data into training and validation set
+    set.seed(42)
+    inTrain<-createDataPartition(train_data$classe,p=0.7,list=FALSE)
+    training_data<-train_data[inTrain,]
+    validation_data<-train_data[-inTrain,]
+
+    # control parameters for the training and cross validation    
+    trcontrol<-trainControl(method = "repeatedcv",
+                            number = 5,
+                            repeats = 5)
+    
+    # parameter grid to fine tune our predictions
+    paramgrid<-expand.grid(
+        interaction.depth=c(1,5,7,9),
+        n.trees=(1:20)*50,
+        shrinkage=0.1,
+        n.minobsinnode=20)
+    
+    set.seed(42)
+    # train the model only if the model doesn't exists in the working directory
+    if (!file.exists("model2.rda")){
+            model2<-train(classe~.,
+                data=training_data,method="gbm",
+                 trControl=trcontrol,tuneGrid=paramgrid)
+        
+        # save the model for later purposes
+        saveRDS(model2,file="./model2.rda")}
+    
+    # load the pre trained model in the current working environment
+    model2<-readRDS("model2.rda")
+    
+    # create confusion matrix using the validation data that is kept separately
+    cnfm<-confusionMatrix(predict(model2,validation_data[,1:16]),validation_data$classe)
+    print("confusion matrix for the validation data")
+  
+    print(cnfm)
+    
+    # make predictions on the test data with the features used during training
+    pred<-predict(model2,test_data[,names(training_data)[-17]])
+
+    # show the predictions
+    print("predictions on the test data")
+    print(pred)
+    }
+
+    # call the function that perform the classification task.
+    # the called function will download the data, load the data and perform the
+    # training and validataion task.
+
+    classification()
+```
+
+## Model accuracy 
+The confusion matrix gives a detailed report of our trained model and is shown
+above.
+The model accuracy as a function of boosting steps for different values of tree
+depth is shown below. One can clearly see for low value of tree depth the accuracy
+saturates at 0.75 on the other hand one tree depth increases the accuracy increases
+and is close to 0.95. Note this accuracy is calculated using the cross validation set.
+
+```{r,cache=TRUE,fig.align="center",fig.cap="Accuracy as a function of boosting steps for different values of tree depths"}
+    library(caret)
+
+    ## plotting model parameters
+    model2<-readRDS("model2.rda")
+    
+    ## accuracy as a function of boosting cycles for different values of tree depths.
+    plot(model2)
+```
+The boosting method also gives an estimate of the feature importance. The plot 
+for the feature importance is shown below.
+
+```{r,cache=TRUE,fig.align="center",fig.cap="Feature importance for the gradient boosting"}
+
+    feature_importance<-varImp(model2)
+    plot(feature_importance)
+```
+The plot clearly tells the accelerometer data (along z direction) in the belt is
+really important in the making the prediction about the activity.
+
+
+# Conclusion
+A trained boosted model in this case can predict the activity based on the accelerometer data.
+
+
+
+
+
+
+
